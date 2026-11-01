@@ -121,9 +121,11 @@ Camera Hub phone app, not a USB device. Elgato's own note lists the same
 string. A live phone on this network advertised `EpocCam Pro on iPhone` with
 TXT keys `SWr`, `I`, `D`, `V`, and `P`, on TCP port 9372.
 
-Connecting to that port gets a binary `Helo` frame (fourcc little-endian).
-The rest of StreamWrap (`SWMessage`, property requests) was not decoded, so
-the plugin lists the phone and does not open the stream.
+Connecting to that port gets a binary `Helo` frame. The desktop answers with
+`Logi`: the phone's version, a token from `CAtomHandshakeServer::Translate`
+(MD5 of an obfuscated key plus the decimal nonce), and capability bit 0.
+The phone then sends `Welc`. That is enough for it to stop waiting. The video
+frames after that are not decoded, so nothing shows up as a V4L2 camera yet.
 
 `_rdlink._tcp` also shows up on Apple devices. That is Apple's own service,
 not Camera Hub. The plugin ignores it.

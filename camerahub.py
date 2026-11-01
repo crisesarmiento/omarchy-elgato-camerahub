@@ -15,11 +15,16 @@ video is "/dev/videoN" or "".
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import shutil
+import socket
+import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 VENDOR = "0fd9"
@@ -44,7 +49,10 @@ NOTE_CAPTURE = "Picture and EDID controls are not driven from Linux yet."
 NOTE_NO_NODE = "USB device seen, no V4L2 node yet."
 NOTE_NO_TOOL = "Install v4l-utils to change controls."
 NOTE_READ_FAILED = "Could not read controls."
-NOTE_WIFI = "On Wi-Fi. Seen, but the video stream is not connected yet."
+NOTE_WIFI = "On Wi-Fi. Connecting."
+NOTE_WIFI_UP = "Connected over Wi-Fi. Video is not a camera device yet."
+STATE_DIR = Path.home() / ".local/state/elgato-camerahub"
+STATE_PATH = STATE_DIR / "wifi.json"
 WIFI_SERVICE = "_egstreamwrap._tcp"
 IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 
@@ -448,6 +456,173 @@ def scan_wifi() -> list[dict]:
     return list(by_id.values())
 
 
+def login_token(nonce: int) -> int:
+    """CAtomHandshakeServer::Translate. HMAC-MD5 of the decimal nonce, then bswap of the two halves xored."""
+    text = str(nonce).encode("ascii")
+    key = bytearray(64)
+    key[0:4] = b"B_%5"
+    key[5] = 0x66
+    key[7:10] = b"oKt"
+    inner = bytearray(byte ^ 0x36 for byte in key)
+    inner[4] = 0x52
+    inner[6] = 0x61
+    outer = bytearray(byte ^ 0x5C for byte in key)
+    outer[4] = 0x38
+    outer[6] = 0x0B
+    digest = hashlib.md5(bytes(outer) + hashlib.md5(bytes(inner) + text).digest()).digest()
+    mixed = int.from_bytes(digest[0:8], "little") ^ int.from_bytes(digest[8:16], "little")
+    return int.from_bytes(mixed.to_bytes(8, "little"), "big")
+
+
+def atom(tag: int, payload: bytes) -> bytes:
+    return struct.pack("<II", tag, len(payload)) + payload
+
+
+def read_frame(sock: socket.socket) -> tuple[bytes, bytes]:
+    header = b""
+    while len(header) < 8:
+        chunk = sock.recv(8 - len(header))
+        if not chunk:
+            raise HelperError("The phone closed the connection.")
+        header += chunk
+    magic = header[:4]
+    length = struct.unpack_from("<I", header, 4)[0]
+    if length > 1_000_000:
+        raise HelperError("The phone sent a frame that is too large.")
+    body = b""
+    while len(body) < length:
+        chunk = sock.recv(length - len(body))
+        if not chunk:
+            raise HelperError("The phone closed the connection.")
+        body += chunk
+    return magic, body
+
+
+def parse_hello(body: bytes) -> tuple[int, int]:
+    if len(body) < 40:
+        raise HelperError("The phone hello was too short.")
+    version_tag, version_len = struct.unpack_from("<II", body, 0)
+    version = struct.unpack_from("<I", body, 8)[0]
+    nonce = struct.unpack_from("<q", body, 32)[0]
+    if version_tag != 0x44000008 or version_len != 4:
+        raise HelperError("The phone hello was not a login challenge.")
+    return version, nonce
+
+
+def login(sock: socket.socket) -> None:
+    magic, body = read_frame(sock)
+    if magic != struct.pack("<I", 0x48656C6F):
+        raise HelperError("The phone did not send a login challenge.")
+    version, nonce = parse_hello(body)
+    parts = [
+        atom(0x44000008, struct.pack("<I", version)),
+        atom(0x4400000A, struct.pack("<Q", login_token(nonce))),
+        atom(0x44000008, struct.pack("<I", 0)),
+    ]
+    sock.sendall(struct.pack("<II", 0x4C6F6769, sum(len(part) for part in parts)) + b"".join(parts))
+    reply, _payload = read_frame(sock)
+    if reply != b"cleW":
+        raise HelperError("The phone rejected the login.")
+
+
+def write_state(payload: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(STATE_PATH)
+
+
+def read_state() -> dict | None:
+    try:
+        payload = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    pid = payload.get("pid")
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return None
+    return payload
+
+
+def ensure_holder() -> None:
+    if read_state() is not None:
+        return
+    subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "hold"],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def annotate_wifi(devices: list[dict]) -> None:
+    if not any(device.get("role") == "wifi" for device in devices):
+        return
+    ensure_holder()
+    state = read_state()
+    live = bool(state and state.get("connected") and state.get("host"))
+    for device in devices:
+        if device.get("role") != "wifi":
+            continue
+        if live and device.get("host") == state.get("host"):
+            device["note"] = NOTE_WIFI_UP
+            device["connected"] = True
+        else:
+            device["connected"] = False
+
+
+def hold() -> int:
+    write_state({"pid": os.getpid(), "connected": False, "host": ""})
+    while True:
+        phones = scan_wifi()
+        if not phones:
+            time.sleep(2)
+            continue
+        phone = phones[0]
+        host = phone["host"]
+        try:
+            port = phone_port(host)
+            sock = socket.create_connection((host, port), timeout=4)
+            sock.settimeout(8)
+            login(sock)
+            write_state({"pid": os.getpid(), "connected": True, "host": host})
+            sock.settimeout(30)
+            while True:
+                try:
+                    read_frame(sock)
+                except socket.timeout:
+                    continue
+        except (OSError, HelperError, struct.error):
+            write_state({"pid": os.getpid(), "connected": False, "host": host})
+            time.sleep(2)
+
+
+def phone_port(host: str) -> int:
+    tool = shutil.which("avahi-browse")
+    if not tool:
+        raise HelperError("avahi-browse is not available.")
+    proc = subprocess.run(
+        [tool, "-rpt", WIFI_SERVICE],
+        capture_output=True,
+        text=True,
+        timeout=4,
+        check=False,
+    )
+    for line in proc.stdout.splitlines():
+        parts = line.split(";")
+        if len(parts) < 9 or not line.startswith("=") or parts[2] != "IPv4":
+            continue
+        if parts[7] == host and parts[8].isdigit():
+            return int(parts[8])
+    raise HelperError("The phone is no longer advertising.")
+
+
 def status_payload(
     usb_root: Path = USB_ROOT,
     video_root: Path = VIDEO_CLASS,
@@ -456,10 +631,12 @@ def status_payload(
 ) -> dict:
     table = load_table(table_path)
     tool = find_tool()
+    devices = scan_devices(table, tool, usb_root, video_root, dev_root)
+    annotate_wifi(devices)
     return {
         "ok": True,
         "backend": "v4l2-ctl" if tool else "none",
-        "devices": scan_devices(table, tool, usb_root, video_root, dev_root),
+        "devices": devices,
     }
 
 
@@ -496,6 +673,8 @@ def do_set(node: str, key: str, value: str) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 2 and argv[1] == "hold":
+        return hold()
     if len(argv) == 2 and argv[1] == "status":
         try:
             emit(status_payload())

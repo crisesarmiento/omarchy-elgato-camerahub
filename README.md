@@ -43,8 +43,8 @@ Click the camera icon.
 - Cam Link and Game Capture: name and USB id only. Picture, EDID, and HDR
   controls from Camera Hub are not driven.
 - EpocCam on an iPhone, over Wi-Fi: the phone shows up when it advertises
-  `_egstreamwrap._tcp` (the service Camera Hub 2.3.0 browses). The video
-  stream itself is not connected yet.
+  `_egstreamwrap._tcp`. The plugin logs in and stays connected, so the phone
+  stops waiting for a computer. The picture is not a V4L2 camera yet.
 
 The bar label is the camera name when one device is connected, otherwise "Camera".
 
