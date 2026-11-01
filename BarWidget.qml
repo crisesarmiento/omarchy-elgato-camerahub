@@ -102,6 +102,12 @@ BarWidget {
     return s.length > max ? s.slice(0, max) : s
   }
 
+  function hostName(value) {
+    var s = clip(value, 64)
+    if (!/^[0-9.]+$/.test(s)) return ""
+    return s
+  }
+
   // sysfs device name, for example "1-2". Never a path, and never shown as one.
   function sysfsName(value) {
     var s = clip(value, 32)
@@ -131,7 +137,7 @@ BarWidget {
       var d = raw[i]
       if (!d || typeof d !== "object") continue
       var role = String(d.role || "")
-      if (role !== "webcam" && role !== "capture") role = ""
+      if (role !== "webcam" && role !== "capture" && role !== "wifi") role = ""
       var controls = []
       var rawControls = Array.isArray(d.controls) ? d.controls : []
       var controlLimit = Math.min(rawControls.length, 32)
@@ -169,6 +175,7 @@ BarWidget {
         product: clip(d.product, 8),
         usb: sysfsName(d.usb),
         video: clip(d.video, 32),
+        host: hostName(d.host),
         note: clip(d.note, 160),
         controls: controls
       })

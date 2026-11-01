@@ -44,6 +44,9 @@ NOTE_CAPTURE = "Picture and EDID controls are not driven from Linux yet."
 NOTE_NO_NODE = "USB device seen, no V4L2 node yet."
 NOTE_NO_TOOL = "Install v4l-utils to change controls."
 NOTE_READ_FAILED = "Could not read controls."
+NOTE_WIFI = "On Wi-Fi. Seen, but the video stream is not connected yet."
+WIFI_SERVICE = "_egstreamwrap._tcp"
+IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 
 # Order is the order status emits. Names are the v4l2-ctl control ids.
 WHITELIST = (
@@ -375,7 +378,74 @@ def scan_devices(
             device["note"] = note
         devices.append(device)
     devices.sort(key=lambda item: (item["usb"], item["product"]))
+    devices.extend(scan_wifi())
     return devices
+
+
+def parse_txt(field: str) -> dict[str, str]:
+    found = {}
+    for item in re.findall(r'"([^"]*)"', field):
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        if key and len(key) <= 8 and len(value) <= 80:
+            found[key] = value
+    return found
+
+
+def scan_wifi() -> list[dict]:
+    """EpocCam / Camera Hub iPhone app. Bonjour type observed in Camera Hub 2.3.0."""
+    tool = shutil.which("avahi-browse")
+    if not tool:
+        return []
+    try:
+        proc = subprocess.run(
+            [tool, "-rpt", WIFI_SERVICE],
+            capture_output=True,
+            text=True,
+            timeout=4,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0 and not proc.stdout:
+        return []
+    by_id: dict[str, dict] = {}
+    for line in proc.stdout.splitlines():
+        if not line.startswith("="):
+            continue
+        parts = line.split(";")
+        if len(parts) < 9:
+            continue
+        proto, name, address, port_text = parts[2], parts[3], parts[7], parts[8]
+        if proto != "IPv4" or IPV4_RE.fullmatch(address) is None:
+            continue
+        if not port_text.isdigit():
+            continue
+        txt = parse_txt(parts[9] if len(parts) > 9 else "")
+        label = txt.get("I") or name.replace("\\032", " ").replace("-", " ")
+        label = " ".join(label.split())
+        if not label or len(label) > 80:
+            continue
+        device_id = txt.get("D") or name
+        if not re.fullmatch(r"[A-Za-z0-9._ -]{1,64}", device_id):
+            device_id = name[:64]
+        # Prefer the first IPv4 hit. A second interface should not duplicate it.
+        by_id.setdefault(
+            device_id,
+            {
+                "product": "",
+                "name": label,
+                "family": "epoccam",
+                "role": "wifi",
+                "usb": "",
+                "video": "",
+                "host": address,
+                "controls": [],
+                "note": NOTE_WIFI,
+            },
+        )
+    return list(by_id.values())
 
 
 def status_payload(

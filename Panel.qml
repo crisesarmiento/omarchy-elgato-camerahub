@@ -38,7 +38,8 @@ Panel {
     "Facecam MK.2",
     "Facecam Neo",
     "Cam Link",
-    "Game Capture"
+    "Game Capture",
+    "EpocCam"
   ]
 
   readonly property string phase: {
@@ -79,6 +80,7 @@ Panel {
   // Vendor is always 0fd9. The helper sends product only.
   function idLine(d) {
     if (!d) return ""
+    if (d.role === "wifi" && d.host) return String(d.host)
     var product = String(d.product || "")
     if (product === "") return ""
     return "0fd9:" + product

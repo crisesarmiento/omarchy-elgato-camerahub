@@ -114,6 +114,20 @@ panel as not available until that layout is confirmed against a plugged-in camer
 SDK cover HDMI, EDID, HDR-to-SDR, and USB speed. That is the Cam Link / Game
 Capture path. This plugin detects those product ids and does not send AT commands.
 
+## iPhone over Wi-Fi
+
+Camera Hub browses Bonjour type `_egstreamwrap._tcp`. That is the EpocCam /
+Camera Hub phone app, not a USB device. Elgato's own note lists the same
+string. A live phone on this network advertised `EpocCam Pro on iPhone` with
+TXT keys `SWr`, `I`, `D`, `V`, and `P`, on TCP port 9372.
+
+Connecting to that port gets a binary `Helo` frame (fourcc little-endian).
+The rest of StreamWrap (`SWMessage`, property requests) was not decoded, so
+the plugin lists the phone and does not open the stream.
+
+`_rdlink._tcp` also shows up on Apple devices. That is Apple's own service,
+not Camera Hub. The plugin ignores it.
+
 ## Local app API
 
 The app registers the URL scheme `camerahub://` and a loopback HTTP address

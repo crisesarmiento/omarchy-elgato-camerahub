@@ -42,6 +42,9 @@ Click the camera icon.
   soon as you release the slider.
 - Cam Link and Game Capture: name and USB id only. Picture, EDID, and HDR
   controls from Camera Hub are not driven.
+- EpocCam on an iPhone, over Wi-Fi: the phone shows up when it advertises
+  `_egstreamwrap._tcp` (the service Camera Hub 2.3.0 browses). The video
+  stream itself is not connected yet.
 
 The bar label is the camera name when one device is connected, otherwise "Camera".
 
