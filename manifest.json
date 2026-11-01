@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "csarmiento.elgato-camerahub",
+  "name": "Camera Hub",
+  "version": "0.1.0",
+  "author": "Cristian Sarmiento",
+  "license": "MIT",
+  "homepage": "https://github.com/crisesarmiento/omarchy-elgato-camerahub",
+  "description": "Bar controls for an Elgato Facecam on Linux.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Camera Hub",
+    "description": "Exposure, focus, and color for an Elgato Facecam.",
+    "category": "Video",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

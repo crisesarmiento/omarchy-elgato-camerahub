@@ -1,0 +1,11 @@
+{
+  "bar.idle": "Camera",
+  "panel.brand": "Camera Hub",
+  "panel.cameras": "Cameras",
+  "panel.checking": "Checking for a camera.",
+  "panel.empty": "No Elgato camera is plugged in.",
+  "panel.capture": "Picture and EDID controls are not driven.",
+  "panel.needV4l": "v4l-utils is required for sliders.",
+  "panel.noControls": "No controls reported.",
+  "panel.error": "Could not read the camera."
+}

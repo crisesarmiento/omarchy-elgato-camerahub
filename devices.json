@@ -1,0 +1,137 @@
+{
+  "vendor": "0fd9",
+  "products": [
+    {
+      "product": "0078",
+      "name": "Facecam",
+      "family": "facecam",
+      "role": "webcam"
+    },
+    {
+      "product": "0079",
+      "name": "Facecam Pro",
+      "family": "facecam-pro",
+      "role": "webcam"
+    },
+    {
+      "product": "0081",
+      "name": "Facecam Neo",
+      "family": "facecam-neo",
+      "role": "webcam"
+    },
+    {
+      "product": "0091",
+      "name": "Facecam 4K (USB 2.0)",
+      "family": "facecam-4k",
+      "role": "webcam"
+    },
+    {
+      "product": "0092",
+      "name": "Facecam 4K",
+      "family": "facecam-4k",
+      "role": "webcam"
+    },
+    {
+      "product": "0093",
+      "name": "Facecam MK.2 (USB 2.0)",
+      "family": "facecam-mk2",
+      "role": "webcam"
+    },
+    {
+      "product": "0094",
+      "name": "Facecam MK.2",
+      "family": "facecam-mk2",
+      "role": "webcam"
+    },
+    {
+      "product": "00d6",
+      "name": "Facecam MK.2 Rev.2 (USB 2.0)",
+      "family": "facecam-mk2",
+      "role": "webcam"
+    },
+    {
+      "product": "00d7",
+      "name": "Facecam MK.2 Rev.2",
+      "family": "facecam-mk2",
+      "role": "webcam"
+    },
+    {
+      "product": "0061",
+      "name": "Cam Link",
+      "family": "cam-link",
+      "role": "capture"
+    },
+    {
+      "product": "0062",
+      "name": "Cam Link (USB 2.0)",
+      "family": "cam-link",
+      "role": "capture"
+    },
+    {
+      "product": "0066",
+      "name": "Cam Link 4K",
+      "family": "cam-link-4k",
+      "role": "capture"
+    },
+    {
+      "product": "0067",
+      "name": "Cam Link 4K (USB 2.0)",
+      "family": "cam-link-4k",
+      "role": "capture"
+    },
+    {
+      "product": "007b",
+      "name": "Cam Link 4K MK.2",
+      "family": "cam-link-4k-mk2",
+      "role": "capture"
+    },
+    {
+      "product": "0085",
+      "name": "Cam Link 4K MK.2 (USB 2.0)",
+      "family": "cam-link-4k-mk2",
+      "role": "capture"
+    },
+    {
+      "product": "00a1",
+      "name": "Cam Link 4K Rev.3",
+      "family": "cam-link-4k-rev3",
+      "role": "capture"
+    },
+    {
+      "product": "00a2",
+      "name": "Cam Link 4K Rev.3 (USB 2.0)",
+      "family": "cam-link-4k-rev3",
+      "role": "capture"
+    },
+    {
+      "product": "009b",
+      "name": "Game Capture 4K X (USB 3.2)",
+      "family": "game-capture-4k-x",
+      "role": "capture"
+    },
+    {
+      "product": "009c",
+      "name": "Game Capture 4K X",
+      "family": "game-capture-4k-x",
+      "role": "capture"
+    },
+    {
+      "product": "009d",
+      "name": "Game Capture 4K X (USB 2.0)",
+      "family": "game-capture-4k-x",
+      "role": "capture"
+    },
+    {
+      "product": "00ae",
+      "name": "Game Capture 4K S (USB 2.0)",
+      "family": "game-capture-4k-s",
+      "role": "capture"
+    },
+    {
+      "product": "00af",
+      "name": "Game Capture 4K S",
+      "family": "game-capture-4k-s",
+      "role": "capture"
+    }
+  ]
+}
