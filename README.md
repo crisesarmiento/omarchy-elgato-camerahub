@@ -10,7 +10,11 @@ This is not Elgato software. It does not ship Camera Hub, firmware, or LUTs.
 It does not write vendor HID reports or extension-unit packets. Capture cards
 (Cam Link, Game Capture) are detected and left alone.
 
+![Camera Hub on the bar](screenshots/bar.png)
+
 ![Camera Hub panel with no camera plugged in](screenshots/panel.png)
+
+The shots are the live panel with nothing plugged in. Sliders appear when a Facecam exposes V4L2 controls.
 
 ## Install
 
