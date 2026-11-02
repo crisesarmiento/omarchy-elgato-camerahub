@@ -124,8 +124,17 @@ TXT keys `SWr`, `I`, `D`, `V`, and `P`, on TCP port 9372.
 Connecting to that port gets a binary `Helo` frame. The desktop answers with
 `Logi`: the phone's version, a token from `CAtomHandshakeServer::Translate`
 (MD5 of an obfuscated key plus the decimal nonce), and capability bit 0.
-The phone then sends `Welc`. That is enough for it to stop waiting. The video
-frames after that are not decoded, so nothing shows up as a V4L2 camera yet.
+The phone then sends `Welc`, then `tBas` (its clock). An empty span request
+(`sSpQ`) is answered with `tBaN`. Echoing that timebase makes the phone send
+`tSyn`; answering those gets a session description (`STyS`) and, after an
+empty `MtDK` and an empty `STbK`, a format list (`STbS`).
+
+That list includes H.264 (`m4bt`) at 640×480, 1280×720, 1920×1080, and
+3840×2160. The phone then sends `hsWU` and, if asked for a stream, focus,
+exposure, and white balance. It does not send picture samples. Camera Hub's
+reply to `hsWU` is a later message with a build hash. That reply is not
+reconstructed. A guessed one closes the phone, so the plugin does not send
+it. Nothing is written to a V4L2 node yet.
 
 `_rdlink._tcp` also shows up on Apple devices. That is Apple's own service,
 not Camera Hub. The plugin ignores it.
