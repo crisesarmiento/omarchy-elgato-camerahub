@@ -20,11 +20,13 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import struct
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 VENDOR = "0fd9"
@@ -50,7 +52,9 @@ NOTE_NO_NODE = "USB device seen, no V4L2 node yet."
 NOTE_NO_TOOL = "Install v4l-utils to change controls."
 NOTE_READ_FAILED = "Could not read controls."
 NOTE_WIFI = "On Wi-Fi. Connecting."
-NOTE_WIFI_UP = "Connected over Wi-Fi. Video is not a camera device yet."
+NOTE_WIFI_UP = "Connected over Wi-Fi. Video is on /dev/video9 (EpocCam)."
+LOOPBACK = Path("/dev/video9")
+VIDEO_UUID = bytes.fromhex("d8156a751e2ecd844c4afc60f8fd48b1")
 STATE_DIR = Path.home() / ".local/state/elgato-camerahub"
 STATE_PATH = STATE_DIR / "wifi.json"
 WIFI_SERVICE = "_egstreamwrap._tcp"
@@ -579,6 +583,13 @@ def annotate_wifi(devices: list[dict]) -> None:
 
 def hold() -> int:
     write_state({"pid": os.getpid(), "connected": False, "host": ""})
+    if LOOPBACK.exists() and shutil.which("ffmpeg"):
+        while True:
+            try:
+                stream_video()
+            except Exception:
+                time.sleep(2)
+            time.sleep(2)
     while True:
         phones = scan_wifi()
         if not phones:
@@ -672,9 +683,206 @@ def do_set(node: str, key: str, value: str) -> int:
     return 0
 
 
+def wire(name: str) -> bytes:
+    return name[::-1].encode("ascii")
+
+
+def uuids_in(buf: bytes) -> list[bytes]:
+    found: list[bytes] = []
+
+    def walk(blob: bytes) -> None:
+        off = 0
+        while off + 8 <= len(blob):
+            tag, length = struct.unpack_from("<II", blob, off)
+            if length > len(blob) - off - 8:
+                return
+            payload = blob[off + 8 : off + 8 + length]
+            if tag == 0x61554944 and len(payload) >= 24:
+                inner_tag, inner_len = struct.unpack_from("<II", payload, 0)
+                if inner_tag == 0x44000013 and inner_len == 16:
+                    found.append(payload[8:24])
+            else:
+                walk(payload)
+            off += 8 + length
+
+    walk(buf)
+    return found
+
+
+def video_uuid(table: bytes) -> bytes | None:
+    if VIDEO_UUID in table:
+        return VIDEO_UUID
+    for raw in uuids_in(table):
+        if int.from_bytes(raw[:8], "little") & 0x70003 == 0x20000:
+            return raw
+    return None
+
+
+def subscription(channel: bytes, dest: bytes) -> bytes:
+    # One tTup, matching the phone's own hsDn. The hash is the unfinalized
+    # MD5 context after those 32 bytes, which is what Camera Hub serializes.
+    block = channel + dest + bytes(32)
+    numbered = lambda value: atom(0x44000007, struct.pack("<I", value))
+    raw_byte = lambda value: atom(0x44000003, bytes([value]))
+    arya = atom(
+        0x41726179,
+        atom(0x44000008, struct.pack("<I", 64)) + b"".join(raw_byte(b) for b in block),
+    )
+    inner = atom(
+        0x68486173,
+        b"".join(
+            numbered(value)
+            for value in (32, 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476)
+        )
+        + arya,
+    )
+    pair = atom(0x44000013, channel) + atom(
+        0x44000013, bytes.fromhex("01000000000000000000000000000000")
+    )
+    node = atom(
+        0x74547570,
+        atom(0x7454536B, atom(0x74534B79, pair) + atom(0x61554944, atom(0x44000013, dest)))
+        + atom(0x7476456D, b""),
+    )
+    outer = atom(0x68486173, inner + numbered(0))
+    return atom(0x6D445473, outer + atom(0x74547270, node))
+
+
+def span_request(session: bytes, endpoint: bytes) -> bytes:
+    message = uuid.uuid4().bytes
+    span = uuid.uuid4().bytes
+    body = atom(
+        0x734D5271,
+        atom(
+            0x73774D67,
+            atom(0x44000013, message)
+            + atom(0x61554944, atom(0x44000013, session))
+            + atom(0x61554944, atom(0x44000013, endpoint)),
+        )
+        + atom(0x68634944, atom(0x44000009, struct.pack("<Q", 0x60000)))
+        + atom(0x61554944, atom(0x44000013, span)),
+    )
+    return (
+        body
+        + atom(0x44000008, struct.pack("<I", 1))
+        + atom(0x4C586475, atom(0x4400000A, struct.pack("<Q", 33333)))
+    )
+
+
+def stop_holder() -> None:
+    state = read_state()
+    if not state:
+        return
+    pid = state.get("pid")
+    if not isinstance(pid, int) or pid <= 0 or pid == os.getpid():
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return
+    time.sleep(0.8)
+
+
+def stream_video() -> int:
+    if not LOOPBACK.exists():
+        return fail(
+            "Missing /dev/video9. Run: sudo modprobe v4l2loopback video_nr=9 "
+            "card_label=EpocCam exclusive_caps=1 && sudo chmod 666 /dev/video9"
+        )
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return fail("ffmpeg is not available.")
+    stop_holder()
+    phones = scan_wifi()
+    if not phones:
+        return fail("The iPhone is not advertising.")
+    host = phones[0]["host"]
+    sock = socket.create_connection((host, phone_port(host)), timeout=4)
+    sock.settimeout(8)
+    login(sock)
+    write_state({"pid": os.getpid(), "connected": True, "host": host})
+    session = None
+    channel = None
+    decoder = subprocess.Popen(
+        [
+            ffmpeg,
+            "-loglevel",
+            "error",
+            "-fflags",
+            "nobuffer+discardcorrupt",
+            "-err_detect",
+            "ignore_err",
+            "-flags",
+            "low_delay",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-an",
+            "-pix_fmt",
+            "bgra",
+            "-s",
+            "640x480",
+            "-f",
+            "v4l2",
+            str(LOOPBACK),
+        ],
+        stdin=subprocess.PIPE,
+    )
+    try:
+        while True:
+            magic, body = read_frame(sock)
+            if magic == wire("tBas"):
+                sock.sendall(struct.pack("<II", 0x73537051, 0))
+            elif magic == wire("tBaN"):
+                sock.sendall(struct.pack("<II", 0x7442614E, len(body)) + body)
+            elif magic == wire("tSyn") and len(body) >= 24:
+                ticks = struct.unpack_from("<Q", body, 16)[0]
+                payload = atom(0x4C587473, atom(0x4400000A, struct.pack("<Q", ticks + 50)))
+                sock.sendall(struct.pack("<II", 0x7453796E, len(payload)) + payload)
+            elif magic == wire("STyS") and session is None:
+                ids = uuids_in(body)
+                if len(ids) < 7:
+                    return fail("The phone session did not list a stream.")
+                session = ids[0]
+                request = span_request(session, ids[6])
+                sock.sendall(struct.pack("<II", 0x73537051, len(request)) + request)
+            elif magic == wire("MtDS"):
+                sock.sendall(struct.pack("<II", 0x4D74444B, 0))
+            elif magic == wire("STbS"):
+                channel = video_uuid(body)
+                if channel is None:
+                    return fail("The phone did not list a 640x480 stream.")
+                sock.sendall(struct.pack("<II", 0x5354624B, 0))
+            elif magic == wire("hsWU"):
+                if channel is None:
+                    return fail("The phone asked for a subscription before listing streams.")
+                payload = subscription(channel, uuid.uuid4().bytes)
+                sock.sendall(struct.pack("<II", 0x68735755, len(payload)) + payload)
+                sock.settimeout(30)
+            elif magic == wire("aDat") and decoder.stdin is not None:
+                decoder.stdin.write(body)
+                decoder.stdin.flush()
+    except (OSError, HelperError, struct.error):
+        return fail("The phone closed the video stream.")
+    finally:
+        if decoder.stdin is not None:
+            decoder.stdin.close()
+        decoder.terminate()
+        sock.close()
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) == 2 and argv[1] == "hold":
         return hold()
+    if len(argv) == 2 and argv[1] == "video":
+        try:
+            return stream_video()
+        except HelperError as exc:
+            return fail(str(exc))
+        except Exception:
+            return fail("Could not start the iPhone camera.")
     if len(argv) == 2 and argv[1] == "status":
         try:
             emit(status_payload())
@@ -689,7 +897,7 @@ def main(argv: list[str]) -> int:
         return fail("Usage: camerahub.py status")
     if len(argv) >= 2 and argv[1] == "set":
         return fail("Usage: camerahub.py set /dev/videoN key value.")
-    return fail("Unknown command. Use status or set.")
+    return fail("Unknown command. Use status, set, or video.")
 
 
 if __name__ == "__main__":

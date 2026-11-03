@@ -134,9 +134,16 @@ That list includes H.264 (`m4bt`) at 640×480, 1280×720, 1920×1080, and
 (`SrPa` / `0x44000008`), so Camera Hub answers with `mDTs`, not `mCIt`: a
 nested `hHas` of the empty MD5 state, one zero `0x44000007`, and an empty
 `tTrp`. The phone accepts that and stays up. It sends `hsDn` (its own
-`mCIt`) and waits. It still does not send picture samples on this socket.
-A second span after that reply closes the phone, so the plugin does not
-send one. Nothing is written to a V4L2 node yet.
+`mCIt`, with a `tTrp` of its subscriptions) and waits.
+
+Video comes from a subscription, not a span. Send the `hsWU{mDTs}` reply with
+one `tTup` node in `tTrp`: channel = the 640×480 stream UUID from `STbS`,
+destination = a random id of ours, and the `hHas` holding the unfinalized MD5
+state after those 32 bytes. The phone then sends `swTg` + `aDat` pairs on the
+same socket. Each `aDat` is Annex-B H.264 (starts `00 00 00 01 27 64`), 640×480.
+Piping them to ffmpeg and writing BGRA to a v4l2loopback node gives live
+video. A second span after the reply closes the phone, so the plugin sends
+none.
 
 `_rdlink._tcp` also shows up on Apple devices. That is Apple's own service,
 not Camera Hub. The plugin ignores it.

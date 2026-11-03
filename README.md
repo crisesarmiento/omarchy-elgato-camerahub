@@ -44,8 +44,11 @@ Click the camera icon.
   controls from Camera Hub are not driven.
 - EpocCam on an iPhone, over Wi-Fi: the phone shows up when it advertises
   `_egstreamwrap._tcp`. The plugin logs in and stays connected, so the phone
-  stops waiting for a computer. After login the phone sends its clock and an
-  H.264 format list. The picture is not a V4L2 camera yet.
+  stops waiting for a computer. It then subscribes to the 640×480 H.264
+  stream and decodes it with ffmpeg into a v4l2loopback camera at
+  `/dev/video9` (card name `EpocCam`). Create the device once:
+  `sudo modprobe v4l2loopback video_nr=9 card_label=EpocCam exclusive_caps=1`
+  and `sudo chmod 666 /dev/video9`. Needs `ffmpeg`.
 
 The bar label is the camera name when one device is connected, otherwise "Camera".
 
