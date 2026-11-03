@@ -69,7 +69,24 @@ PICTURE_CONTROLS = (
     ("brightness", "Brightness", "int", -100, 100, 0),
     ("contrast", "Contrast", "int", -100, 100, 0),
     ("saturation", "Saturation", "int", -100, 100, 0),
+    ("look", "Look", "menu", 0, 99, 0),
 )
+
+# Own colour recipes. Elgato's LUT files are not shipped. Drop your own .cube
+# files into LUT_DIR and they show up as extra looks.
+LOOKS = (
+    ("Off", None),
+    ("Noir", "hue=s=0,eq=contrast=1.25"),
+    ("Vivid", "eq=saturation=1.45:contrast=1.08"),
+    ("Warm", "colorbalance=rs=0.12:gs=0.03:bs=-0.12"),
+    ("Cool", "colorbalance=rs=-0.1:bs=0.12"),
+    ("Sepia", "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131"),
+)
+LUT_DIR = Path.home() / ".config/elgato-camerahub/luts"
+LUT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}\.cube$")
+PRESETS_PATH = STATE_DIR / "presets.json"
+PRESET_SLOTS = 3
+SNAPSHOT_DIR = Path.home() / "Pictures/CameraHub"
 IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 
 # Order is the order status emits. Names are the v4l2-ctl control ids.
@@ -565,6 +582,28 @@ def read_state() -> dict | None:
     return payload
 
 
+def look_names() -> list[str]:
+    names = [name for name, _f in LOOKS]
+    try:
+        files = sorted(
+            f.name for f in LUT_DIR.iterdir() if f.is_file() and LUT_NAME_RE.fullmatch(f.name)
+        )
+    except OSError:
+        files = []
+    return names + [f[:-5] for f in files]
+
+
+def look_filter(index: int) -> str | None:
+    if index < len(LOOKS):
+        return LOOKS[index][1]
+    names = look_names()
+    if index >= len(names):
+        return None
+    path = str(LUT_DIR / (names[index] + ".cube"))
+    path = path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    return f"lut3d=file='{path}'"
+
+
 def load_picture() -> dict[str, int]:
     values = {key: default for key, _l, _k, _lo, _hi, default in PICTURE_CONTROLS}
     try:
@@ -577,22 +616,28 @@ def load_picture() -> dict[str, int]:
         value = stored.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
             values[key] = max(low, min(high, value))
+    values["look"] = min(values["look"], len(look_names()) - 1)
     return values
 
 
 def picture_controls() -> list[dict]:
     values = load_picture()
+    names = look_names()
     return [
         {
             "key": key,
             "label": label,
             "kind": kind,
             "min": low,
-            "max": high,
+            "max": len(names) - 1 if key == "look" else high,
             "step": 5 if kind == "int" else 1,
             "value": values[key],
             "writable": True,
-            "options": [],
+            "options": (
+                [{"value": i, "label": name} for i, name in enumerate(names)]
+                if key == "look"
+                else []
+            ),
         }
         for key, label, kind, low, high, _default in PICTURE_CONTROLS
     ]
@@ -612,6 +657,9 @@ def picture_filter(values: dict[str, int]) -> str | None:
                 1 + values["saturation"] / 100,
             )
         )
+    look = look_filter(values["look"])
+    if look:
+        chain.append(look)
     return ",".join(chain) or None
 
 
@@ -679,6 +727,104 @@ def do_preview(node: str) -> int:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     PREVIEW_PATH.write_text(json.dumps({"pid": proc.pid}), encoding="utf-8")
     emit({"ok": True, "preview": True})
+    return 0
+
+
+def preset_key(device: dict) -> str:
+    return "wifi" if device.get("role") == "wifi" else f"usb-{device.get('product', '')}"
+
+
+def load_presets() -> dict:
+    try:
+        stored = json.loads(PRESETS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return stored if isinstance(stored, dict) else {}
+
+
+def device_for_node(payload: dict, node: str) -> dict | None:
+    for device in payload.get("devices", []):
+        if device.get("video") == node and device.get("role") in ("webcam", "wifi"):
+            return device
+    return None
+
+
+def do_preset(action: str, node: str, slot_text: str) -> int:
+    if NODE_RE.fullmatch(node) is None:
+        return fail("That is not a video device node.")
+    if not slot_text.isdigit() or not 1 <= int(slot_text) <= PRESET_SLOTS:
+        return fail(f"The preset must be 1 to {PRESET_SLOTS}.")
+    if action not in ("save", "apply"):
+        return fail("Use preset save or preset apply.")
+    slot = slot_text
+    try:
+        device = device_for_node(status_payload(), node)
+        if device is None:
+            return fail("That video node is not a camera from this plugin.")
+        key = preset_key(device)
+        presets = load_presets()
+        if action == "save":
+            values = {
+                c["key"]: int(c["value"])
+                for c in device.get("controls", [])
+                if c.get("writable") and c.get("value") is not None
+            }
+            presets.setdefault(key, {})[slot] = values
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = PRESETS_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(presets), encoding="utf-8")
+            tmp.replace(PRESETS_PATH)
+        else:
+            values = presets.get(key, {}).get(slot)
+            if not isinstance(values, dict):
+                return fail("That preset is empty.")
+            for name, number in values.items():
+                if isinstance(number, int) and not isinstance(number, bool):
+                    if node == str(LOOPBACK):
+                        spec = next((c for c in PICTURE_CONTROLS if c[0] == name), None)
+                        if spec:
+                            save_picture(name, max(spec[3], min(spec[4], number)))
+                    elif name in LABELS:
+                        tool = find_tool()
+                        if tool:
+                            run_tool([tool, "-d", node, "--set-ctrl", f"{name}={number}"])
+        emit(status_payload())
+    except HelperError as exc:
+        return fail(str(exc))
+    except Exception:
+        return fail("Could not use that preset.")
+    return 0
+
+
+def do_snapshot(node: str) -> int:
+    if NODE_RE.fullmatch(node) is None:
+        return fail("That is not a video device node.")
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return fail("Install ffmpeg to take a snapshot.")
+    try:
+        if device_for_node(status_payload(), node) is None:
+            return fail("That video node is not a camera from this plugin.")
+        SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        target = SNAPSHOT_DIR / time.strftime("camerahub-%Y%m%d-%H%M%S.png")
+        try:
+            subprocess.run(
+                [
+                    ffmpeg, "-nostdin", "-loglevel", "error", "-f", "v4l2", "-i", node,
+                    "-vf", "select=gte(n\\,5)", "-fps_mode", "passthrough", "-frames:v", "1", "-y", str(target),
+                ],
+                timeout=10,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            pass
+        if not target.exists() or target.stat().st_size == 0:
+            return fail("Could not read a picture. Another program may be using the camera.")
+        emit({"ok": True, "snapshot": str(target)})
+    except HelperError as exc:
+        return fail(str(exc))
+    except Exception:
+        return fail("Could not take a snapshot.")
     return 0
 
 
@@ -776,6 +922,12 @@ def status_payload(
     tool = find_tool()
     devices = scan_devices(table, tool, usb_root, video_root, dev_root)
     annotate_wifi(devices)
+    presets = load_presets()
+    for device in devices:
+        if device.get("controls"):
+            device["presets"] = sorted(
+                int(k) for k in presets.get(preset_key(device), {}) if k.isdigit()
+            )
     return {
         "ok": True,
         "backend": "v4l2-ctl" if tool else "none",
@@ -800,6 +952,8 @@ def do_set(node: str, key: str, value: str) -> int:
         if VALUE_RE.fullmatch(value) is None:
             return fail("The value must be a whole number.")
         number = max(spec[3], min(spec[4], int(value)))
+        if key == "look":
+            number = min(number, len(look_names()) - 1)
         try:
             save_picture(key, number)
             emit(status_payload())
@@ -1054,6 +1208,10 @@ def main(argv: list[str]) -> int:
             return fail(str(exc))
         except Exception:
             return fail("Could not start the iPhone camera.")
+    if len(argv) == 5 and argv[1] == "preset":
+        return do_preset(argv[2], argv[3], argv[4])
+    if len(argv) == 3 and argv[1] == "snapshot":
+        return do_snapshot(argv[2])
     if len(argv) == 3 and argv[1] == "preview":
         try:
             return do_preview(argv[2])
@@ -1073,7 +1231,7 @@ def main(argv: list[str]) -> int:
         return fail("Usage: camerahub.py status")
     if len(argv) >= 2 and argv[1] == "set":
         return fail("Usage: camerahub.py set /dev/videoN key value.")
-    return fail("Unknown command. Use status, set, preview, or video.")
+    return fail("Unknown command. Use status, set, preview, preset, snapshot, or video.")
 
 
 if __name__ == "__main__":

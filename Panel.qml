@@ -322,6 +322,28 @@ Panel {
               onClicked: if (root.hostWidget && root.device) root.hostWidget.preview(root.device.video)
             }
 
+            Button {
+              visible: root.canPreview
+              width: parent.width
+              text: strings.t("panel.snapshot")
+              bordered: true
+              enabled: !(root.hostWidget && root.hostWidget.snapshotBusy)
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.body
+              onClicked: if (root.hostWidget && root.device) root.hostWidget.snapshot(root.device.video)
+            }
+
+            PlainText {
+              visible: text !== ""
+              width: parent.width
+              text: root.hostWidget ? root.hostWidget.snapshotNote : ""
+              color: root.dim
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+              wrapMode: Text.NoWrap
+            }
+
             PanelSeparator {
               visible: root.showingControls || root.noteLine !== "" || root.explanation !== ""
               foreground: root.foreground
@@ -360,6 +382,68 @@ Panel {
                   required property int index
                   control: root.controls[index]
                 }
+              }
+            }
+
+            Column {
+              visible: root.showingControls
+              width: parent.width
+              spacing: Style.spacing.sm
+
+              PanelSectionHeader {
+                text: strings.t("panel.presets")
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.spacing.md
+
+                Repeater {
+                  model: 3
+                  Button {
+                    id: slotButton
+                    required property int index
+                    readonly property int slot: index + 1
+                    readonly property bool filled: !!(root.device && root.device.presets && root.device.presets.indexOf(slot) >= 0)
+                    property bool held: false
+                    width: (parent.width - Style.spacing.md * 2) / 3
+                    text: String(slot)
+                    selected: filled
+                    bordered: true
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.body
+                    hasCursor: slotArea.containsMouse
+
+                    // Button has no press-and-hold, so this layer sits on top
+                    // of it and handles click and hold itself.
+                    MouseArea {
+                      id: slotArea
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      pressAndHoldInterval: 800
+                      onPressed: slotButton.held = false
+                      onPressAndHold: {
+                        slotButton.held = true
+                        if (root.hostWidget && root.device) root.hostWidget.preset("save", root.device.video, slotButton.slot)
+                      }
+                      onClicked: {
+                        if (slotButton.held || !root.hostWidget || !root.device) return
+                        root.hostWidget.preset(slotButton.filled ? "apply" : "save", root.device.video, slotButton.slot)
+                      }
+                    }
+                  }
+                }
+              }
+
+              PlainText {
+                width: parent.width
+                text: strings.t("panel.presetHint")
+                color: root.dim
+                font.pixelSize: Style.font.caption
               }
             }
           }

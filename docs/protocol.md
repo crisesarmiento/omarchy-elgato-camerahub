@@ -153,3 +153,16 @@ not Camera Hub. The plugin ignores it.
 The app registers the URL scheme `camerahub://` and a loopback HTTP address
 `http://127.0.0.1:%1/`. That server is how the macOS app is driven from outside.
 It does not exist on Linux, so the plugin talks to the camera node instead.
+
+## iPhone picture controls: what is and is not driven (2026-11-03)
+
+Passive capture of a live session (no packets sent beyond the working
+handshake) shows, after `hsWU`, only mux frames for the 640x480 video channel
+(`aUID` + `swTg` + `aDat`, about 53 `aUID` per second). The phone's `hsDn`
+lists three destination UUIDs, each twice, and `STbS` is a stream-format table
+(video resolutions) with no property fourccs. The `Focu`, `Expo`, `WhBa` and
+`zoom` tags exist in the desktop binary, but their set/announce layouts were
+not recovered, and the property channels never appear unless subscribed.
+So focus, exposure, white balance, zoom and torch on the phone are NOT
+driven. The plugin does not guess packets for them. Mirror, flip, brightness,
+contrast, saturation and looks are applied locally by ffmpeg.

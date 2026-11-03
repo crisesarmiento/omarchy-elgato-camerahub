@@ -34,6 +34,14 @@ BarWidget {
   property double setStarted: 0
   property bool statusGotStdout: false
 
+  property bool presetBusy: false
+  property bool presetOutDone: false
+  property bool presetExitDone: false
+  property bool presetSettled: false
+  property string presetText: ""
+  property bool snapshotBusy: false
+  property string snapshotNote: ""
+
   readonly property var devices: (hub && Array.isArray(hub.devices)) ? hub.devices : []
   readonly property string backend: hub && hub.backend === "v4l2-ctl" ? "v4l2-ctl" : "none"
 
@@ -168,7 +176,16 @@ BarWidget {
           options: options
         })
       }
+      var presets = []
+      if (Array.isArray(d.presets)) {
+        var presetLimit = Math.min(d.presets.length, 3)
+        for (var p = 0; p < presetLimit; p++) {
+          var slotNum = Math.round(num(d.presets[p], 0))
+          if (slotNum >= 1 && slotNum <= 3 && presets.indexOf(slotNum) < 0) presets.push(slotNum)
+        }
+      }
       devices.push({
+        presets: presets,
         name: clip(d.name, 80),
         family: clip(d.family, 32),
         role: role,
@@ -309,6 +326,72 @@ BarWidget {
     previewProc.running = true
   }
 
+  function noteOnce(text) {
+    root.snapshotNote = clip(text, 90)
+    noteTimer.restart()
+  }
+
+  function controllable(video) {
+    if (!videoOk(video)) return false
+    var device = findDevice(video)
+    if (!device || (device.role !== "webcam" && device.role !== "wifi")) return false
+    return !!(device.controls && device.controls.length > 0)
+  }
+
+  // save/apply a preset slot. Apply changes camera controls, so it waits for
+  // pending sets and holds the status timer off, like setControl.
+  function preset(action, video, slot) {
+    var n = Math.round(Number(slot))
+    if (action !== "save" && action !== "apply") return
+    if (!controllable(video) || !(n >= 1 && n <= 3)) return
+    if (root.presetBusy || root.setBusy || root.setQueue.length > 0) return
+    root.presetBusy = true
+    root.presetOutDone = false
+    root.presetExitDone = false
+    root.presetSettled = false
+    root.presetText = ""
+    root.setStarted = Date.now()
+    hold(800)
+    presetProc.command = ["python3", root.helperPath, "preset", action, String(video), String(n)]
+    presetProc.running = true
+  }
+
+  function finishPreset() {
+    if (!root.presetOutDone || !root.presetExitDone || root.presetSettled) return
+    root.presetSettled = true
+    var parsed = null
+    try { parsed = JSON.parse(String(root.presetText || "").trim()) } catch (e) { parsed = null }
+    root.presetBusy = false
+    if (parsed && parsed.ok === true) {
+      applyPayload(parsed)
+      root.holdUntil = Date.now() + 400
+    } else {
+      noteOnce(parsed && parsed.error ? parsed.error : "")
+      root.holdUntil = 0
+      root.refresh(true)
+    }
+  }
+
+  function snapshot(video) {
+    if (!controllable(video) || root.snapshotBusy) return
+    root.snapshotBusy = true
+    snapshotProc.command = ["python3", root.helperPath, "snapshot", String(video)]
+    snapshotProc.running = true
+  }
+
+  function finishSnapshot(text) {
+    if (!root.snapshotBusy) return
+    root.snapshotBusy = false
+    var parsed = null
+    try { parsed = JSON.parse(String(text || "").trim()) } catch (e) { parsed = null }
+    if (parsed && parsed.ok === true && parsed.snapshot) {
+      var path = String(parsed.snapshot)
+      noteOnce(path.slice(path.lastIndexOf("/") + 1))
+    } else {
+      noteOnce(parsed && parsed.error ? parsed.error : "")
+    }
+  }
+
   function finishSet() {
     if (!root.setOutDone || !root.setExitDone || root.setSettled) return
     root.setSettled = true
@@ -336,7 +419,7 @@ BarWidget {
   // One read at load so the bar can show a connected camera before the
   // panel is opened. The timer below runs only while the panel is open.
   function refresh(force) {
-    if (statusProc.running || root.setBusy) return
+    if (statusProc.running || root.setBusy || root.presetBusy) return
     if (!force && (root.setQueue.length > 0 || Date.now() < root.holdUntil)) return
     root.statusStarted = Date.now()
     root.statusGotStdout = false
@@ -345,7 +428,7 @@ BarWidget {
   }
 
   function finishStatus(text) {
-    if (root.setStarted > root.statusStarted || Date.now() < root.holdUntil || root.setBusy) return
+    if (root.setStarted > root.statusStarted || Date.now() < root.holdUntil || root.setBusy || root.presetBusy) return
     ingest(text)
   }
 
@@ -414,6 +497,60 @@ BarWidget {
   // Toggles the preview window. Output is ignored; it never touches the
   // status or set queues.
   Process { id: previewProc }
+
+  Process {
+    id: presetProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.presetText = text
+        root.presetOutDone = true
+        presetStall.stop()
+        root.finishPreset()
+      }
+    }
+    onExited: function(code, status) {
+      root.presetExitDone = true
+      if (root.presetOutDone) root.finishPreset()
+      else presetStall.restart()
+    }
+  }
+
+  Timer {
+    id: presetStall
+    interval: 80
+    onTriggered: {
+      if (root.presetSettled) return
+      if (!root.presetOutDone) {
+        root.presetText = ""
+        root.presetOutDone = true
+      }
+      root.finishPreset()
+    }
+  }
+
+  Process {
+    id: snapshotProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        snapshotStall.stop()
+        root.finishSnapshot(text)
+      }
+    }
+    onExited: function(code, status) { snapshotStall.restart() }
+  }
+
+  Timer {
+    id: snapshotStall
+    interval: 80
+    onTriggered: root.finishSnapshot("")
+  }
+
+  // Clears the short snapshot/preset message.
+  Timer {
+    id: noteTimer
+    interval: 6000
+    onTriggered: root.snapshotNote = ""
+  }
 
   Timer {
     id: setStall
