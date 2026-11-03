@@ -184,8 +184,12 @@ BarWidget {
           if (slotNum >= 1 && slotNum <= 3 && presets.indexOf(slotNum) < 0) presets.push(slotNum)
         }
       }
+      var image = typeof d.image === "string" ? d.image : ""
+      if (image.length > 256 || image.charAt(0) !== "/" || !/\.jpg$/.test(image)
+          || image.indexOf("..") >= 0 || /[\u0000-\u001f\u007f]/.test(image)) image = ""
       devices.push({
         presets: presets,
+        image: image,
         name: clip(d.name, 80),
         family: clip(d.family, 32),
         role: role,

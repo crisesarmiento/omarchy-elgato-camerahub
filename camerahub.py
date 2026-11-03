@@ -57,6 +57,7 @@ LOOPBACK = Path("/dev/video9")
 VIDEO_UUID = bytes.fromhex("d8156a751e2ecd844c4afc60f8fd48b1")
 STATE_DIR = Path.home() / ".local/state/elgato-camerahub"
 STATE_PATH = STATE_DIR / "wifi.json"
+PREVIEW_IMAGE = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "camerahub-preview.jpg"
 PICTURE_PATH = STATE_DIR / "picture.json"
 PREVIEW_PATH = STATE_DIR / "preview.json"
 WIFI_SERVICE = "_egstreamwrap._tcp"
@@ -855,6 +856,8 @@ def annotate_wifi(devices: list[dict]) -> None:
             if LOOPBACK.exists():
                 device["video"] = str(LOOPBACK)
                 device["controls"] = picture_controls()
+                if PREVIEW_IMAGE.exists():
+                    device["image"] = str(PREVIEW_IMAGE)
         else:
             device["connected"] = False
 
@@ -1102,11 +1105,14 @@ def start_decoder(ffmpeg: str) -> subprocess.Popen:
         "-an",
     ]
     chain = picture_filter(load_picture())
+    # Output 1: the camera other programs open. YUYV is the format browsers
+    # and PipeWire accept; BGRA made the device invisible to them.
+    args += ["-map", "0:v"]
     if chain:
         args += ["-vf", chain]
     args += [
         "-pix_fmt",
-        "bgra",
+        "yuyv422",
         "-s",
         "640x480",
         "-r",
@@ -1116,6 +1122,29 @@ def start_decoder(ffmpeg: str) -> subprocess.Popen:
         "-f",
         "v4l2",
         str(LOOPBACK),
+    ]
+    # Output 2: a small picture the panel shows. A file, so the panel never
+    # competes with other programs for the camera.
+    small = (chain + "," if chain else "") + "scale=240:180"
+    args += [
+        "-map",
+        "0:v",
+        "-vf",
+        small,
+        "-r",
+        "4",
+        "-fps_mode",
+        "cfr",
+        "-q:v",
+        "6",
+        "-f",
+        "image2",
+        "-update",
+        "1",
+        "-atomic_writing",
+        "1",
+        "-y",
+        str(PREVIEW_IMAGE),
     ]
     return subprocess.Popen(args, stdin=subprocess.PIPE)
 

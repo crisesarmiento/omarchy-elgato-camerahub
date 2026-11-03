@@ -62,6 +62,8 @@ Panel {
     return /^\/dev\/video[0-9]+$/.test(String(d.video || ""))
   }
 
+  readonly property string miniPath: (device && device.image) ? device.image : ""
+
   readonly property var controls: (device && device.controls) ? device.controls : []
 
   readonly property string errorLine: {
@@ -308,6 +310,73 @@ Panel {
                 font.pixelSize: Style.font.caption
                 font.letterSpacing: 0.6
                 LayoutMirroring.enabled: false
+              }
+            }
+
+            Rectangle {
+              id: mini
+              visible: root.miniPath !== ""
+              width: parent.width
+              height: Math.round(width * 3 / 4)
+              radius: Style.space(8)
+              color: Qt.rgba(0, 0, 0, 0.35)
+              clip: true
+
+              // Two stacked images: the new frame loads in the one behind and
+              // only comes forward when ready, so the old frame stays on screen.
+              property bool frontIsA: true
+              property int tick: 0
+
+              function url() { return "file://" + root.miniPath + "?" + mini.tick }
+
+              function advance() {
+                var back = mini.frontIsA ? frameB : frameA
+                if (back.status === Image.Loading) return
+                mini.tick++
+                back.source = mini.url()
+              }
+
+              function swapIfReady(img) {
+                var isBack = (img === frameA) !== mini.frontIsA
+                if (!isBack || img.status !== Image.Ready) return
+                mini.frontIsA = !mini.frontIsA
+              }
+
+              Timer {
+                interval: 250
+                repeat: true
+                running: root.opened && mini.visible
+                triggeredOnStart: true
+                onTriggered: mini.advance()
+              }
+
+              Image {
+                id: frameA
+                anchors.fill: parent
+                fillMode: Image.PreserveAspectCrop
+                cache: false
+                asynchronous: true
+                z: mini.frontIsA ? 1 : 0
+                onStatusChanged: mini.swapIfReady(frameA)
+              }
+
+              Image {
+                id: frameB
+                anchors.fill: parent
+                fillMode: Image.PreserveAspectCrop
+                cache: false
+                asynchronous: true
+                z: mini.frontIsA ? 0 : 1
+                onStatusChanged: mini.swapIfReady(frameB)
+              }
+
+              Rectangle {
+                anchors.fill: parent
+                z: 2
+                radius: parent.radius
+                color: "transparent"
+                border.width: 1
+                border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.25)
               }
             }
 

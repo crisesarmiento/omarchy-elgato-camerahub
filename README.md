@@ -52,13 +52,19 @@ Click the camera icon.
   mirror, flip, brightness, contrast, and saturation. These run in ffmpeg on
   your computer; nothing extra is sent to the phone. The picture restarts
   for a moment when you change one.
+- The loopback camera is plain YUYV 640x480, which Chrome, Firefox and
+  PipeWire apps accept. If a PipeWire app (not a browser) does not list
+  "EpocCam" because it started before the phone connected, run
+  `systemctl --user restart wireplumber`.
 - Looks, presets, snapshot: on the iPhone feed the panel also has a Look menu
   (Off, Noir, Vivid, Warm, Cool, Sepia). Drop your own `.cube` files in
   `~/.config/elgato-camerahub/luts/` (names like `My-Look.cube`) and they
   appear as extra looks. Three preset slots save and load the current
   settings on the iPhone and on USB webcams. Snapshot saves a PNG to
   `~/Pictures/CameraHub/`. Elgato's own LUTs are not included.
-- Preview: "Open preview" opens an `ffplay` window for the selected camera
+- Preview: for the iPhone the panel shows a small live picture (a 240x180
+  file the helper refreshes, so it never takes the camera from other apps).
+  "Open preview" opens an `ffplay` window for the selected camera
   (click again to close it). Only one program can read `/dev/video9` at a
   time, so close the preview before opening OBS or a browser call.
 
