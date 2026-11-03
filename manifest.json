@@ -2,18 +2,20 @@
   "schemaVersion": 1,
   "id": "csarmiento.elgato-camerahub",
   "name": "Camera Hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Cristian Sarmiento",
   "license": "MIT",
   "homepage": "https://github.com/crisesarmiento/omarchy-elgato-camerahub",
-  "description": "Bar controls for an Elgato Facecam on Linux.",
-  "kinds": ["bar-widget"],
+  "description": "Elgato camera controls and an iPhone EpocCam webcam for the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
     "displayName": "Camera Hub",
-    "description": "Exposure, focus, and color for an Elgato Facecam.",
+    "description": "Controls for Elgato webcams, plus an iPhone (EpocCam over Wi-Fi) as a Linux camera with live preview.",
     "category": "Video",
     "allowMultiple": false,
     "defaultSection": "right"

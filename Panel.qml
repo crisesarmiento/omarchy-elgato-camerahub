@@ -177,7 +177,7 @@ Panel {
     centerOnBar: false
     focusTarget: panel.loadedContent
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Style.space(760))
+    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Style.space(1000))
 
     content: PanelKeyCatcher {
       id: keyCatcher
