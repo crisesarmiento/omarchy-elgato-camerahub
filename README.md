@@ -48,7 +48,13 @@ Click the camera icon.
   stream and decodes it with ffmpeg into a v4l2loopback camera at
   `/dev/video9` (card name `EpocCam`). Create the device once:
   `sudo modprobe v4l2loopback video_nr=9 card_label=EpocCam exclusive_caps=1`
-  and `sudo chmod 666 /dev/video9`. Needs `ffmpeg`.
+  and `sudo chmod 666 /dev/video9`. Needs `ffmpeg`. The panel then offers
+  mirror, flip, brightness, contrast, and saturation. These run in ffmpeg on
+  your computer; nothing extra is sent to the phone. The picture restarts
+  for a moment when you change one.
+- Preview: "Open preview" opens an `ffplay` window for the selected camera
+  (click again to close it). Only one program can read `/dev/video9` at a
+  time, so close the preview before opening OBS or a browser call.
 
 The bar label is the camera name when one device is connected, otherwise "Camera".
 

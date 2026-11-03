@@ -57,7 +57,19 @@ LOOPBACK = Path("/dev/video9")
 VIDEO_UUID = bytes.fromhex("d8156a751e2ecd844c4afc60f8fd48b1")
 STATE_DIR = Path.home() / ".local/state/elgato-camerahub"
 STATE_PATH = STATE_DIR / "wifi.json"
+PICTURE_PATH = STATE_DIR / "picture.json"
+PREVIEW_PATH = STATE_DIR / "preview.json"
 WIFI_SERVICE = "_egstreamwrap._tcp"
+
+# Picture adjustments for the iPhone feed. They run in ffmpeg on this computer,
+# so nothing extra is sent to the phone. (key, label, kind, min, max, default)
+PICTURE_CONTROLS = (
+    ("mirror", "Mirror", "bool", 0, 1, 0),
+    ("flip", "Flip", "bool", 0, 1, 0),
+    ("brightness", "Brightness", "int", -100, 100, 0),
+    ("contrast", "Contrast", "int", -100, 100, 0),
+    ("saturation", "Saturation", "int", -100, 100, 0),
+)
 IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 
 # Order is the order status emits. Names are the v4l2-ctl control ids.
@@ -553,6 +565,123 @@ def read_state() -> dict | None:
     return payload
 
 
+def load_picture() -> dict[str, int]:
+    values = {key: default for key, _l, _k, _lo, _hi, default in PICTURE_CONTROLS}
+    try:
+        stored = json.loads(PICTURE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return values
+    if not isinstance(stored, dict):
+        return values
+    for key, _label, _kind, low, high, _default in PICTURE_CONTROLS:
+        value = stored.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            values[key] = max(low, min(high, value))
+    return values
+
+
+def picture_controls() -> list[dict]:
+    values = load_picture()
+    return [
+        {
+            "key": key,
+            "label": label,
+            "kind": kind,
+            "min": low,
+            "max": high,
+            "step": 5 if kind == "int" else 1,
+            "value": values[key],
+            "writable": True,
+            "options": [],
+        }
+        for key, label, kind, low, high, _default in PICTURE_CONTROLS
+    ]
+
+
+def picture_filter(values: dict[str, int]) -> str | None:
+    chain = []
+    if values["mirror"]:
+        chain.append("hflip")
+    if values["flip"]:
+        chain.append("vflip")
+    if values["brightness"] or values["contrast"] or values["saturation"]:
+        chain.append(
+            "eq=brightness={:.2f}:contrast={:.2f}:saturation={:.2f}".format(
+                values["brightness"] / 100,
+                1 + values["contrast"] / 100,
+                1 + values["saturation"] / 100,
+            )
+        )
+    return ",".join(chain) or None
+
+
+def save_picture(key: str, value: int) -> None:
+    values = load_picture()
+    values[key] = value
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = PICTURE_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(values), encoding="utf-8")
+    tmp.replace(PICTURE_PATH)
+
+
+def picture_mtime() -> float:
+    try:
+        return PICTURE_PATH.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def do_preview(node: str) -> int:
+    if NODE_RE.fullmatch(node) is None:
+        return fail("That is not a video device node.")
+    player = shutil.which("ffplay")
+    if not player:
+        return fail("Install ffmpeg to open the preview.")
+    try:
+        previous = json.loads(PREVIEW_PATH.read_text(encoding="utf-8"))
+        pid = previous.get("pid")
+        if isinstance(pid, int) and pid > 0:
+            with open(f"/proc/{pid}/cmdline", "rb") as handle:
+                if b"ffplay" in handle.read():
+                    os.kill(pid, signal.SIGTERM)
+                    emit({"ok": True, "preview": False})
+                    return 0
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+    try:
+        known = {
+            device.get("video")
+            for device in status_payload().get("devices", [])
+            if device.get("role") in ("webcam", "wifi")
+        }
+    except Exception:
+        known = set()
+    if node not in known:
+        return fail("That video node is not a camera from this plugin.")
+    proc = subprocess.Popen(
+        [
+            player,
+            "-loglevel",
+            "quiet",
+            "-fflags",
+            "nobuffer",
+            "-window_title",
+            "Camera Hub",
+            "-f",
+            "v4l2",
+            node,
+        ],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    PREVIEW_PATH.write_text(json.dumps({"pid": proc.pid}), encoding="utf-8")
+    emit({"ok": True, "preview": True})
+    return 0
+
+
 def ensure_holder() -> None:
     if read_state() is not None:
         return
@@ -577,6 +706,9 @@ def annotate_wifi(devices: list[dict]) -> None:
         if live and device.get("host") == state.get("host"):
             device["note"] = NOTE_WIFI_UP
             device["connected"] = True
+            if LOOPBACK.exists():
+                device["video"] = str(LOOPBACK)
+                device["controls"] = picture_controls()
         else:
             device["connected"] = False
 
@@ -661,6 +793,19 @@ def webcam_for_node(payload: dict, node: str) -> dict | None:
 def do_set(node: str, key: str, value: str) -> int:
     if NODE_RE.fullmatch(node) is None:
         return fail("That is not a video device node.")
+    if node == str(LOOPBACK):
+        spec = next((c for c in PICTURE_CONTROLS if c[0] == key), None)
+        if spec is None:
+            return fail("That control is not supported.")
+        if VALUE_RE.fullmatch(value) is None:
+            return fail("The value must be a whole number.")
+        number = max(spec[3], min(spec[4], int(value)))
+        try:
+            save_picture(key, number)
+            emit(status_payload())
+        except Exception:
+            return fail(f"Could not set {spec[1]}.")
+        return 0
     if key not in LABELS:
         return fail("That control is not supported.")
     if VALUE_RE.fullmatch(value) is None:
@@ -783,6 +928,44 @@ def stop_holder() -> None:
     time.sleep(0.8)
 
 
+def start_decoder(ffmpeg: str) -> subprocess.Popen:
+    args = [
+        ffmpeg,
+        "-loglevel",
+        "error",
+        "-fflags",
+        "nobuffer+discardcorrupt",
+        "-err_detect",
+        "ignore_err",
+        "-flags",
+        "low_delay",
+        "-use_wallclock_as_timestamps",
+        "1",
+        "-f",
+        "h264",
+        "-i",
+        "pipe:0",
+        "-an",
+    ]
+    chain = picture_filter(load_picture())
+    if chain:
+        args += ["-vf", chain]
+    args += [
+        "-pix_fmt",
+        "bgra",
+        "-s",
+        "640x480",
+        "-r",
+        "25",
+        "-fps_mode",
+        "cfr",
+        "-f",
+        "v4l2",
+        str(LOOPBACK),
+    ]
+    return subprocess.Popen(args, stdin=subprocess.PIPE)
+
+
 def stream_video() -> int:
     if not LOOPBACK.exists():
         return fail(
@@ -803,32 +986,9 @@ def stream_video() -> int:
     write_state({"pid": os.getpid(), "connected": True, "host": host})
     session = None
     channel = None
-    decoder = subprocess.Popen(
-        [
-            ffmpeg,
-            "-loglevel",
-            "error",
-            "-fflags",
-            "nobuffer+discardcorrupt",
-            "-err_detect",
-            "ignore_err",
-            "-flags",
-            "low_delay",
-            "-f",
-            "h264",
-            "-i",
-            "pipe:0",
-            "-an",
-            "-pix_fmt",
-            "bgra",
-            "-s",
-            "640x480",
-            "-f",
-            "v4l2",
-            str(LOOPBACK),
-        ],
-        stdin=subprocess.PIPE,
-    )
+    seen = picture_mtime()
+    header = None
+    decoder = start_decoder(ffmpeg)
     try:
         while True:
             magic, body = read_frame(sock)
@@ -860,9 +1020,20 @@ def stream_video() -> int:
                 payload = subscription(channel, uuid.uuid4().bytes)
                 sock.sendall(struct.pack("<II", 0x68735755, len(payload)) + payload)
                 sock.settimeout(30)
-            elif magic == wire("aDat") and decoder.stdin is not None:
-                decoder.stdin.write(body)
-                decoder.stdin.flush()
+            elif magic == wire("aDat"):
+                if header is None:
+                    header = body
+                if picture_mtime() != seen:
+                    seen = picture_mtime()
+                    if decoder.stdin is not None:
+                        decoder.stdin.close()
+                    decoder.terminate()
+                    decoder = start_decoder(ffmpeg)
+                    # The first chunk carries SPS/PPS, which a fresh decoder needs.
+                    decoder.stdin.write(header)
+                if decoder.stdin is not None:
+                    decoder.stdin.write(body)
+                    decoder.stdin.flush()
     except (OSError, HelperError, struct.error):
         return fail("The phone closed the video stream.")
     finally:
@@ -883,6 +1054,11 @@ def main(argv: list[str]) -> int:
             return fail(str(exc))
         except Exception:
             return fail("Could not start the iPhone camera.")
+    if len(argv) == 3 and argv[1] == "preview":
+        try:
+            return do_preview(argv[2])
+        except Exception:
+            return fail("Could not open the preview.")
     if len(argv) == 2 and argv[1] == "status":
         try:
             emit(status_payload())
@@ -897,7 +1073,7 @@ def main(argv: list[str]) -> int:
         return fail("Usage: camerahub.py status")
     if len(argv) >= 2 and argv[1] == "set":
         return fail("Usage: camerahub.py set /dev/videoN key value.")
-    return fail("Unknown command. Use status, set, or video.")
+    return fail("Unknown command. Use status, set, preview, or video.")
 
 
 if __name__ == "__main__":

@@ -50,9 +50,16 @@ Panel {
 
   readonly property bool showingControls: {
     var d = root.device
-    if (!d || d.role !== "webcam" || root.backend !== "v4l2-ctl") return false
+    if (!d || (d.role !== "webcam" && d.role !== "wifi")) return false
+    if (d.role === "webcam" && root.backend !== "v4l2-ctl") return false
     if (!/^\/dev\/video[0-9]+$/.test(String(d.video || ""))) return false
     return !!(d.controls && d.controls.length > 0)
+  }
+
+  readonly property bool canPreview: {
+    var d = root.device
+    if (!d || (d.role !== "webcam" && d.role !== "wifi")) return false
+    return /^\/dev\/video[0-9]+$/.test(String(d.video || ""))
   }
 
   readonly property var controls: (device && device.controls) ? device.controls : []
@@ -70,7 +77,7 @@ Panel {
     var d = root.device
     if (!d || root.noteLine !== "") return ""
     if (d.role === "capture") return strings.t("panel.capture")
-    if (root.backend !== "v4l2-ctl" && d.role !== "capture") return strings.t("panel.needV4l")
+    if (root.backend !== "v4l2-ctl" && d.role === "webcam") return strings.t("panel.needV4l")
     if (root.showingControls) return ""
     return strings.t("panel.noControls")
   }
@@ -304,6 +311,17 @@ Panel {
               }
             }
 
+            Button {
+              visible: root.canPreview
+              width: parent.width
+              text: strings.t("panel.preview")
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.body
+              onClicked: if (root.hostWidget && root.device) root.hostWidget.preview(root.device.video)
+            }
+
             PanelSeparator {
               visible: root.showingControls || root.noteLine !== "" || root.explanation !== ""
               foreground: root.foreground
@@ -328,6 +346,13 @@ Panel {
               visible: root.showingControls
               width: parent.width
               spacing: Style.spacing.xl
+
+              PanelSectionHeader {
+                visible: root.device && root.device.role === "wifi"
+                text: strings.t("panel.picture")
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
 
               Repeater {
                 model: root.controls.length

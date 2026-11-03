@@ -2,6 +2,8 @@
   "bar.idle": "Camera",
   "panel.brand": "Camera Hub",
   "panel.cameras": "Cameras",
+  "panel.preview": "Open preview",
+  "panel.picture": "Picture",
   "panel.checking": "Checking for a camera.",
   "panel.empty": "No Elgato camera is plugged in.",
   "panel.capture": "Picture and EDID controls are not driven.",

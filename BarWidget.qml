@@ -233,9 +233,11 @@ BarWidget {
   }
 
   function controlWritable(video, key) {
-    if (root.backend !== "v4l2-ctl" || !videoOk(video) || !keyOk(key)) return false
+    if (!videoOk(video) || !keyOk(key)) return false
     var device = findDevice(video)
-    if (!device || device.role !== "webcam") return false
+    if (!device || (device.role !== "webcam" && device.role !== "wifi")) return false
+    // Webcam sliders need v4l2-ctl. iPhone picture controls do not.
+    if (device.role === "webcam" && root.backend !== "v4l2-ctl") return false
     var control = findControl(device, key)
     return !!(control && control.writable === true)
   }
@@ -297,6 +299,14 @@ BarWidget {
     hold(800)
     setProc.command = ["python3", root.helperPath, "set", job.video, job.key, String(job.value)]
     setProc.running = true
+  }
+
+  function preview(video) {
+    if (!videoOk(video) || previewProc.running) return
+    var device = findDevice(video)
+    if (!device || (device.role !== "webcam" && device.role !== "wifi")) return
+    previewProc.command = ["python3", root.helperPath, "preview", String(video)]
+    previewProc.running = true
   }
 
   function finishSet() {
@@ -400,6 +410,10 @@ BarWidget {
       else setStall.restart()
     }
   }
+
+  // Toggles the preview window. Output is ignored; it never touches the
+  // status or set queues.
+  Process { id: previewProc }
 
   Timer {
     id: setStall
